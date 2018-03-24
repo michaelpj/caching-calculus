@@ -27,7 +27,8 @@ import qualified Data.Text as T
 show1 :: (Show1 f, Show a) => f a -> String
 show1 fa = showsPrec1 0 fa ""
 
--- recursion-schemes stuff
+defaultSalt :: Int
+defaultSalt = 56
 
 instance (Hashable1 f) => Hashable (Fix f) where
   hashWithSalt salt (Fix x) = hashWithSalt1 salt x
@@ -161,17 +162,17 @@ algebraCacheGeneric :: (MonadState (Caches a) m,
                         Show a) =>
                  MAlgebra f m a -> MAlgebra f m (Result m a)
 algebraCacheGeneric algebra t = do
-  let termHash = hashWithSalt1 0 $ fmap resultToHash t
-  logInfoN ("Considering " <> T.pack (show1 t) <> ", hash is " <> T.pack (show termHash))
+  let termHash = hashWithSalt1 defaultSalt $ fmap resultToHash t
+  logInfoN $ "Considering " <> T.pack (show1 t) <> ", term hash is " <> T.pack (show termHash)
   caches <- get
   let maybeContentHash = M.lookup termHash (hashCache caches)
   let computation = contentComputation algebra maybeContentHash t
   case maybeContentHash of
     Just contentHash -> do
-      logInfoN "Hash cache hit"
+      logInfoN $ "Hash cache hit for " <> T.pack (show termHash)
       pure $ Content contentHash computation
     Nothing -> do
-      logInfoN "Hash cache miss"
+      logInfoN $ "Hash cache miss for " <> T.pack (show termHash)
       evaled <- computation
       modify $ \c -> c {
         hashCache = M.insert termHash (hash evaled) (hashCache c)
@@ -187,16 +188,17 @@ contentComputation :: (MonadState (Caches a) m,
                    Show a) =>
                   MAlgebra f m a -> Maybe Hash -> f (Result m a) -> m a
 contentComputation algebra maybeContentHash t = do
+  logInfoN $ "Considering " <> T.pack (show1 t) <> ", content hash is " <> T.pack (show maybeContentHash)
   caches <- get
   let maybeContent = do
         contentHash <- maybeContentHash
         M.lookup contentHash (contentCache caches)
   case maybeContent of
     Just value -> do
-      logInfoN "Content cache hit"
+      logInfoN $ "Content cache hit for " <> T.pack (show maybeContentHash)
       pure value
     Nothing -> do
-      logInfoN "Content cache miss"
+      logInfoN $ "Content cache miss for " <> T.pack (show maybeContentHash)
       evaled <- mapM resultToValue t >>= algebra
       modify $ \c -> c {
         contentCache = M.insert (hash evaled) evaled (contentCache c)
