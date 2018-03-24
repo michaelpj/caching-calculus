@@ -9,7 +9,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Simple where
+module CachingEval where
 
 import Data.Map as M
 import Data.Hashable
