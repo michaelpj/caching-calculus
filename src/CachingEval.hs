@@ -7,7 +7,9 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module CachingEval where
 
@@ -86,51 +88,6 @@ runM m = runStdoutLoggingT m
 type Hash = Int
 type Cache v = M.Map Hash v
 
-type CacheT v = StateT (Cache v)
-
-type M2 a = (CacheT a) (LoggingT IO) a
-runM2 :: M2 a -> IO (a, Cache a)
-runM2 m = runStdoutLoggingT (runStateT m M.empty)
-
--- Generic cache before evaluation
-
-withCaching :: (MonadLogger m,
-               MonadState (Cache b) m,
-               Hashable a) =>
-               (a -> m b) -> a -> m b
-withCaching reeval arg = do
-  c <- get
-  let h = hash arg :: Int
-  logInfoN $ "Evaluating, hash is " <> (T.pack (show h))
-  case (M.lookup h c) of
-    Just v -> do
-      logInfoN "Cache hit"
-      pure v
-    Nothing -> do
-      logInfoN "Cache miss"
-      evaled <- reeval arg
-      modify $ M.insert h evaled
-      pure evaled
-
-cataMCache :: (Traversable f,
-               Monad m,
-               MonadLogger m,
-               MonadState (Cache a) m,
-               Hashable1 f) =>
-              MAlgebra f m a -> (Fix f -> m a)
-cataMCache alg = withCaching reeval
-  where reeval (Fix x) = mapM (cataMCache alg) x >>= alg
-
-testCache2 :: M2 Int
-testCache2 = do
-  i <- cataMCache evalAlgebra testTerm
-  logInfoN ("Evaluated to " <> T.pack (show i))
-  i2 <- cataMCache evalAlgebra testTerm
-  logInfoN ("Evaluated to " <> T.pack (show i2))
-  pure i2
-
--- Content caching passing up caches when necessary
-
 data Caches a = Caches {
   contentCache :: Cache a,
   hashHashCache :: Cache Hash,
@@ -140,6 +97,64 @@ data Caches a = Caches {
 type M3 a = (StateT (Caches a)) (LoggingT IO) a
 runM3 :: M3 a -> IO (a, Caches a)
 runM3 m = runStdoutLoggingT (runStateT m Caches { contentCache = M.empty, hashHashCache = M.empty, treeHashCache = M.empty } )
+
+-- Generic cache before evaluation
+
+withCaching :: (MonadLogger m,
+               MonadState (Caches b) m,
+               Hashable a,
+               Hashable b) =>
+               (a -> m b) -> a -> m b
+withCaching ev arg = do
+  tc <- gets treeHashCache
+  cc <- gets contentCache
+  let treeHash = hash arg
+  logInfoN $ "Evaluating, hash is " <> (T.pack (show treeHash))
+  case (M.lookup treeHash tc) of
+    Just contentHash -> do
+      logInfoN "Hash cache hit"
+      case (M.lookup contentHash cc) of
+        Just value -> do
+          logInfoN "Content cache hit"
+          pure value
+        Nothing -> do
+          logInfoN "Content cache miss"
+          evalAndCache
+    Nothing -> do
+      logInfoN "Hash cache miss"
+      evalAndCache
+  where
+    evalAndCache = do
+      evaled <- ev arg
+      modify $ \c -> c {
+        treeHashCache = M.insert (hash arg) (hash evaled) (treeHashCache c),
+        contentCache = M.insert (hash evaled) evaled (contentCache c)
+      }
+      pure evaled
+
+cataMCache :: forall t m a. (Monad m,
+               Traversable (Base t),
+               Recursive t,
+               MonadLogger m,
+               MonadState (Caches a) m,
+               Hashable a,
+               Hashable t) =>
+              MAlgebra (Base t) m a -> t -> m a
+cataMCache f = withCaching ev
+  where
+    ev :: t -> m a
+    ev = f <=< traverse (cataMCache f) . project
+
+testCache2 :: M3 Int
+testCache2 = do
+  i <- cataMCache evalAlgebra testTerm
+  logInfoN ("Evaluated to " <> T.pack (show i))
+  i2 <- cataMCache evalAlgebra testTerm
+  logInfoN ("Evaluated to " <> T.pack (show i2))
+  pure i2
+
+-- Content caching passing up caches when necessary
+
 
 data Result m a =
   -- An actual value
@@ -220,3 +235,4 @@ testCache3 = do
     logInfoN ("Evaluated to " <> T.pack (show i2))
     pure i2
   resultToValue res
+
