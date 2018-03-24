@@ -32,14 +32,14 @@ defaultSalt = 56
 instance (Hashable1 f) => Hashable (Fix f) where
   hashWithSalt salt (Fix x) = hashWithSalt1 salt x
 
-type Algebra f a = f a -> a
+-- A monadic algebra
 type MAlgebra f m a = f a -> m a
 
-cataM :: (Traversable f, Monad m) => MAlgebra f m a -> (Fix f -> m a)
-cataM f = c where c = f <=< mapM c . unfix
+-- see https://github.com/ekmett/recursion-schemes/issues/3
+cataM :: (Monad m, Traversable (Base t), Recursive t) => MAlgebra (Base t) m a -> t -> m a
+cataM f = (>>= f) . cata (traverse (>>= f))
 
 -- term functor
-
 data TermF a = PlusF a a
              | MultF a a
              | IntConstF Int
@@ -168,7 +168,7 @@ algebraCacheGeneric :: (MonadState (Caches a) m,
                  MAlgebra f m a -> MAlgebra f m (Result m a)
 algebraCacheGeneric algebra t = do
   let termHash = hashWithSalt1 defaultSalt $ fmap resultToHash t
-  logInfoN $ "Considering " <> T.pack (show1 t) <> ", term hash is " <> T.pack (show termHash)
+  logInfoN $ "Considering " <> T.pack (show1 t)
   hc <- gets hashHashCache
   let maybeContentHash = M.lookup termHash hc
   let computation = contentComputation algebra maybeContentHash (mapM resultToValue t)
