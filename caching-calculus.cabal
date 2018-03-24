@@ -15,7 +15,7 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     CC
+  exposed-modules:     CachingEval
   build-depends:       base >= 4.7 && < 5
                      , containers
                      , hashable
