@@ -34,6 +34,7 @@ defaultSalt = 56
 instance (Hashable1 f) => Hashable (Fix f) where
   hashWithSalt salt (Fix x) = hashWithSalt1 salt x
 
+type Algebra f a = f a -> a
 -- A monadic algebra
 type MAlgebra f m a = f a -> m a
 
@@ -154,8 +155,6 @@ testCache2 = do
   pure i2
 
 -- Content caching passing up caches when necessary
-
-
 data Result m a =
   -- An actual value
   Value a
@@ -173,7 +172,7 @@ resultToValue :: (Hashable a, Monad m) => Result m a -> m a
 resultToValue (Value a) = pure a
 resultToValue (Content _ ma) = ma
 
-algebraCacheGeneric :: (MonadState (Caches a) m,
+cacheAlgebra :: (MonadState (Caches a) m,
                         MonadLogger m,
                         Hashable1 f,
                         Hashable a,
@@ -181,7 +180,7 @@ algebraCacheGeneric :: (MonadState (Caches a) m,
                         Show1 f,
                         Show a) =>
                  MAlgebra f m a -> MAlgebra f m (Result m a)
-algebraCacheGeneric algebra t = do
+cacheAlgebra algebra t = do
   let termHash = hashWithSalt1 defaultSalt $ fmap resultToHash t
   logInfoN $ "Considering " <> T.pack (show1 t)
   hc <- gets hashHashCache
@@ -228,10 +227,10 @@ testCache3 :: M3 Int
 testCache3 = do
   res <- do
     logInfoN ("ATTEMPT 1")
-    i <- cataM (algebraCacheGeneric evalAlgebra) testTerm
+    i <- cataM (cacheAlgebra evalAlgebra) testTerm
     logInfoN ("Evaluated to " <> T.pack (show i))
     logInfoN ("ATTEMPT 2")
-    i2 <- cataM (algebraCacheGeneric evalAlgebra) testTerm
+    i2 <- cataM (cacheAlgebra evalAlgebra) testTerm
     logInfoN ("Evaluated to " <> T.pack (show i2))
     pure i2
   resultToValue res
